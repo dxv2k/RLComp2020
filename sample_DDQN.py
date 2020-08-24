@@ -47,7 +47,7 @@ class ReplayBuffer(object):
     def sample_buffer(self, batch_size): 
         max_mem = min(self.mem_counter, self.mem_size)
         batch = np.random.choice(max_mem, batch_size)
-        states = self.action_memory[batch]
+        states = self.state_memory[batch]
         new_states = self.new_state_memory[batch]
         actions = self.action_memory[batch]
         terminal = self.terminal_memory[batch]
@@ -55,109 +55,74 @@ class ReplayBuffer(object):
 
         return states, actions, rewards, new_states, terminal
 
-
-# Build DQN model 
-# build DQN function was taken and rename from DQNModel.py -> DQN.create_model()
-def build_dqn(learning_rate, input_dim, action_space): 
-    model = Sequential()
-    model.add(Dense(300, input_dim = input_dim))
-    model.add(Activation('relu'))
-    model.add(Dense(300))
-    model.add(Activation('relu'))
-    model.add(Dense(action_space)) 
-    model.add(Activation('linear')) 
-    adam = optimizers.adam(lr=learning_rate)
-    model.compile(optimizer = adam, loss = 'mse')
+def build_dqn(learning_rate, n_actions, input_dims, fc1_dims, fc2_dims): 
+    u''' 
+        fc1_dims : fully connected layers dimension
+        fc2_dims : fully connected layers dimension
+    '''
+    model = Sequential([
+        Dense(fc1_dims, input_shape(input_dims,)), 
+        Activation('relu'), 
+        Dense(fc2_dims), 
+        Activation('relu'), 
+        Dense(n_actions), 
+    ])
+    model.compile(optimizer=Adam(lr=learning_rate), loss='mse')
     return model
 
 
 # Double Deep Q Network off-policy 
-class DDQNAction(object): 
+class DDQNAgent(object): 
     def __init__(
-        self,
-        input_dim, #The number of inputs for the DQN network
-        action_space, #The number of actions for the DQN network
-        batch_size, # Batch size for experience replay 
-        saved_model_name = 'ddqn_model.h5', 
-
-        # DDQN model hyper parameter
-        epsilon = 1, # Epsilon - the exploration factor
-        epsilon_min = 0.01, # The minimum epsilon 
-        epsilon_decay = 0.999,# The decay epislon for each update_epsilon time
-        learning_rate = 0.00025, # The learning rate for the DQN network
-        gamma = 0.99, # The discount factor
-        replace_target = 100, # Replace the target network with current network 
-
-        # target_model = None, #The DQN target model 
-        # sess=None,
-    ):
-        # Input
-        self.input_dim = input_dim 
-        self.action_space = action_space 
+        self, 
+        input_dims, # input dimension   
+        n_actions, # the total numbere of actions 
+        batch_size, # batch size for tranining experience replay  
+        alpha = 0.00025, # learning rate
+        gamma = 0.99, # discount factor
+        epsilon = 1, # exploration factor for epsilon greedy policy  
+        epsilon_decay = 0.999, 
+        epsilon_min = 0.01, 
+        fname = 'ddqn_model.h5', 
+        mem_size = 10000, 
+        replace_target = 100, # replace target network with online network 
+    ): 
+        self.n_actions = n_actions
+        self.action_space = [i for i in range(self.n_actions)]
         self.batch_size = batch_size
         self.replace_target = replace_target
-        self.model = saved_model_name
-        self.memory = ReplayBuffer(batch_size, input_dim, action_space, discrete=True) 
+        self.model = fname 
+        self.memory = ReplayBuffer(mem_size, input_dims, n_actions, discrete=True)
 
-        # Hyperparameter 
+        # Hyperparameters 
         self.gamma = gamma 
-        self.epsilon = epsilon 
-        self.epsilon_min = epsilon_min 
+        self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
-        self.learning_rate = learning_rate
+        self.epsilon_min = epsilon_min
 
-        # Creating networks for evaluate and target
-        self.q_target = build_model(self.learning_rate, self.input_dim, self.action_space)
-        self.q_evaluate = build_model(self.learning_rate, self.input_dim, self.action_space)
+        # Creating network for evaluation and target
+        self.q_eval = build_dqn(alpha, n_actions, input_dims, 256, 256) 
+        self.q_target = build_dqn(alpha, n_actions, input_dims, 256, 256) 
 
-        #Tensorflow GPU optimization
-        config = tf.compat.v1.ConfigProto()
-        config.gpu_options.allow_growth = True
-        self.sess = tf.compat.v1.Session(config=config)
-        K.set_session(sess)
-        self.sess.run( tf.compat.v1.global_variables_initializer()) 
- 
     def remember(self, state, action, reward, new_state, done): 
         self.memory.store_transition(state, action, reward, new_state, done) 
 
-
     # Action for each state with epsilon greedy policy
-    def act(self,state):
-        # Get the index of the maximum Q values      
-        a_max = np.argmax(self.q_evaluate.predict(state.reshape(1,len(state))))   
-        if (random() < self.epsilon):
-            a_chosen = randrange(self.action_space)
-        else:
-            a_chosen = a_max      
-        return a_chosen
+    def choose_act(self,state):
+        state = state[np.newaxis,:]
+        rand = np.random()
+        if rand < self.epsilon: 
+            action = np.random.choice(self.action_space)
+        else: 
+            actions = self.q_eval.predict(state)
+            action = np.argmax(actions)
+        return action
 
-    # # TODO: modified to fit DDQN
-    # def replay(self, samples, batch_size): 
-    #     inputs = np.zeros((batch_size, self.input_dim))
-    #     targets = np.zeros((batch_size, self.input_dim))
-
-    #     for i in range(0,batch_size):
-    #         state = samples[0][i,:]
-    #         action = samples[1][i]
-    #         reward = samples[2][i]
-    #         new_state = samples[3][i,:]
-    #         done= samples[4][i]
-            
-    #         inputs[i,:] = state
-    #         targets[i,:] = self.target_model.predict(state.reshape(1,len(state)))        
-    #         # if done:
-    #         #     targets[i,action] = reward # if terminated, only equals reward
-    #         # else:
-    #         #     Q_future = np.max(self.target_model.predict(new_state.reshape(1,len(new_state))))
-    #         #     targets[i,action] = reward + Q_future * self.gamma
-    #     #Training
-    #     loss = self.model.train_on_batch(inputs, targets)  
-
-    # TODO: working on learn function 
+    # TODO: NEED FURTHER UNDERSTANDING
     def learn(self): 
         if self.memory.mem_counter > self.batch_size: 
-            state, action, reward, new_state, done = self.memory.sample_buffer(self.batch_size) 
-
+            state, action, reward, new_state, done = self.memory.sample_buffer(
+                                                                self.batch_size) 
             action_values = np.array(self.action_space, dtype = np.int8)
             action_indices = np.dot(action, action_values)
 
@@ -174,7 +139,8 @@ class DDQNAction(object):
             q_target[batch_index, action_indices] = reward + self.gamma*q_next[batch_index, max_actions.astype(int)]*done
 
             _ = self.q_evaluate.fit(state, q_target, verbose = 0)
-
+            
+            # Decay epsilon after iterations 
             self.epsilon = self.epsilon*self.epsilon_decay if self.epsilon > self.epsilon_min else self.epsilon_min
 
             if self.memory.mem_counter % self.replace_target == 0: 
