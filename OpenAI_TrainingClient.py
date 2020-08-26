@@ -2,7 +2,7 @@
 # Link https://www.youtube.com/watch?v=UCgsv6tMReY
 
 import gym
-from gym import wrappers 
+# from gym import wrappers 
 import numpy as np
 
 from sample_DDQN import DDQNAgent 
@@ -39,4 +39,6 @@ if __name__ == '__main()__':
         print('score %.2f' %score)
         print('average score %.2f' %avg_score)
         print('----------------------------------------')
-
+        
+        if i % 10 == 0 and i > 0: 
+            ddqn_agent.save_model()
